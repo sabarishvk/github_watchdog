@@ -1,0 +1,96 @@
+#!/bin/bash
+fetch_contributor() {
+	
+	if [ $github_project_url != "" ]
+	then
+		log "looking for new contributors .. "
+		curl -s $github_project_url | awk '/login/ { gsub("\"",""); print $2 }' | sed s/,//g
+	else
+		error_log "github_project_url not found .."
+	fi
+}
+
+get_config_params() {
+
+	config_file=$1
+	
+	if [ -e $config_file ]
+	then
+		source $config_file
+		log "Initiated config file variables"
+	else
+		error_log "config file missing"
+	fi
+}
+
+poll_new_contributor() {
+
+	contributor_db=$1
+	new_contributor=$2
+	
+	while :
+	do
+		fetch_contributor > $new_contributor
+
+		if [ -e $contributor_db ] && [ -e $new_contributor ]
+		then 
+			diff_contributor=$(diff $contributor_db $new_contributor)
+			log "checking for new contributors... "
+
+		elif	[ -e $contributor_db ]
+		then
+			error_log "contributor_db file is missing"
+		else
+			error_log "new_contributor file is missing"
+		fi
+			
+		if [ "$diff_contributor" != "" ]
+		then
+			notification "Found new Contributor, please check the contributor_db file ...." "$notification_channel_info"
+			log "Found new Contributor .... Sent event notification to $notification_channel_info"
+			cat $new_contributor > $contributor_db
+		fi
+	        	
+		sleep $polling_interval
+	done
+}
+
+log() {
+	
+	local event_logfile=$base_dir/github_watchdog.`date +"%Y-%m-%d"`.log
+	log_message=$1
+	echo "`date "+%Y-%m-%d-%H-%M-%S"`  $log_message" >> $event_logfile
+}
+
+error_log() {
+	local error_logfile=$base_dir/github_watchdog.`date +"%Y-%m-%d"`.error_log
+	error_message=$1
+	echo "`date "+%Y-%m-%d-%H-%M-%S"`  $error_message" >> $error_logfile
+}
+
+notification() {
+	
+	subject=$1
+	mail_to=$2
+	
+	echo $subject | $(which sendmail) $mail_to
+}
+# base_directory for all code files#
+base_dir=`pwd`
+config_file=$base_dir/config_file
+contributor_db=$base_dir/contributor.db
+new_contributor=$base_dir/new_contributor.db
+
+# This config file has 3 parameters as of now which will be sourced into the code env :
+# github_project_url
+# notification_channel_info
+# polling_interval
+get_config_params $config_file
+
+# Fetch the original set of contributors of the project
+touch $contributor_db
+fetch_contributor  > $contributor_db
+
+# checking for new contributors
+touch $new_contributor
+poll_new_contributor $contributor_db $new_contributor
